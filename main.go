@@ -169,6 +169,11 @@ func initIPTables() {
 		}
 	}
 
+	ensureDropRule(33899, "tcp")
+	ensureDropRule(33899, "udp")
+	ensureDropRule(33889, "tcp")
+	ensureDropRule(33889, "udp")
+
 	stateMutex.Lock()
 	defer stateMutex.Unlock()
 	for i := range appState.Rules {
@@ -202,6 +207,21 @@ func delRule(ip string, port int, proto string) {
 		log.Printf("Failed to del rule %s %d %s: %v", ip, port, proto, err)
 	} else {
 		log.Printf("Deleted rule %s %d %s", ip, port, proto)
+	}
+}
+
+func ensureDropRule(port int, proto string) {
+	for {
+		cmd := exec.Command("iptables", "-D", appState.Settings.IPTablesChain, "-p", proto, "--dport", strconv.Itoa(port), "-j", "DROP")
+		if err := cmd.Run(); err != nil {
+			break
+		}
+	}
+	cmd := exec.Command("iptables", "-A", appState.Settings.IPTablesChain, "-p", proto, "--dport", strconv.Itoa(port), "-j", "DROP")
+	if err := cmd.Run(); err != nil {
+		log.Printf("Failed to append DROP rule for %d %s: %v", port, proto, err)
+	} else {
+		log.Printf("Appended DROP rule for %d %s", port, proto)
 	}
 }
 
@@ -262,11 +282,13 @@ func checkTCP(ip string, port int) bool {
 	out, err := cmd.Output()
 	if err != nil { return false }
 	target := fmt.Sprintf(":%d", port)
-	ipPrefix := ip + ":"
 	for _, line := range strings.Split(string(out), "\n") {
 		f := strings.Fields(line)
 		if len(f) >= 5 {
-			if strings.HasPrefix(f[4], ipPrefix) && (strings.HasSuffix(f[3], target) || strings.HasSuffix(f[4], target)) {
+			local := f[3]
+			peer := f[4]
+			if (strings.Contains(local, ip) || strings.Contains(peer, ip)) && 
+			   (strings.HasSuffix(local, target) || strings.HasSuffix(peer, target)) {
 				return true
 			}
 		}
@@ -294,11 +316,13 @@ func checkUDP(ip string, port int) bool {
 	out, err = cmd.Output()
 	if err != nil { return false }
 	target := fmt.Sprintf(":%d", port)
-	ipPrefix := ip + ":"
 	for _, line := range strings.Split(string(out), "\n") {
 		f := strings.Fields(line)
 		if len(f) >= 5 {
-			if strings.HasPrefix(f[4], ipPrefix) && (strings.HasSuffix(f[3], target) || strings.HasSuffix(f[4], target)) {
+			local := f[3]
+			peer := f[4]
+			if (strings.Contains(local, ip) || strings.Contains(peer, ip)) && 
+			   (strings.HasSuffix(local, target) || strings.HasSuffix(peer, target)) {
 				return true
 			}
 		}
