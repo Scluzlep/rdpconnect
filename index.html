@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>临时端口放行</title>
+    <style>
+        :root {
+            --bg: #1e1e2e;
+            --card-bg: #282a36;
+            --text: #f8f8f2;
+            --text-muted: #6272a4;
+            --primary: #bd93f9;
+            --success: #50fa7b;
+            --danger: #ff5555;
+            --border: #44475a;
+        }
+        * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        body { background: var(--bg); color: var(--text); padding: 20px; max-width: 800px; margin: 0 auto; line-height: 1.5; }
+        .header { text-align: center; margin-bottom: 30px; }
+        .card { background: var(--card-bg); border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); border: 1px solid var(--border); }
+        .card-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 15px; margin-bottom: 15px; }
+        .card-title { font-size: 1.25rem; font-weight: 600; margin: 0; }
+        .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 15px; }
+        .status-item { background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px; font-size: 0.9rem; }
+        .status-label { color: var(--text-muted); font-size: 0.8rem; margin-bottom: 5px; display: block; }
+        .status-value { font-weight: 500; }
+        .status-value.on { color: var(--success); }
+        .status-value.off { color: var(--text-muted); }
+        .btn { border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer; transition: opacity 0.2s; font-size: 0.9rem; }
+        .btn:hover { opacity: 0.8; }
+        .btn:active { opacity: 0.6; }
+        .btn-primary { background: var(--primary); color: #fff; }
+        .btn-success { background: var(--success); color: #000; }
+        .btn-danger { background: var(--danger); color: #fff; }
+        .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+        .controls { display: flex; gap: 10px; flex-wrap: wrap; }
+        .toast { position: fixed; bottom: 20px; right: 20px; padding: 15px 25px; border-radius: 8px; color: #fff; transform: translateY(100px); opacity: 0; transition: all 0.3s; z-index: 1000; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+        .toast.show { transform: translateY(0); opacity: 1; }
+        .toast.success { background: var(--success); color: #000; }
+        .toast.error { background: var(--danger); }
+        .global-controls { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; }
+        .switch { position: relative; display: inline-block; width: 50px; height: 24px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: var(--border); transition: .4s; border-radius: 24px; }
+        .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: var(--primary); }
+        input:checked + .slider:before { transform: translateX(26px); }
+        .switch-wrapper { display: flex; align-items: center; gap: 10px; }
+        .info-text { color: var(--text-muted); font-size: 0.85rem; margin-top: 15px; }
+        .time-badge { font-family: monospace; }
+        @media (max-width: 600px) {
+            .global-controls { flex-direction: column; align-items: flex-start; }
+            .status-grid { grid-template-columns: 1fr 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>临时端口放行</h1>
+        <div style="color: var(--text-muted); margin-top: 10px; font-size: 0.9rem;">
+            当前 IP: <strong id="current-ip" style="color: var(--text)">--</strong> | 
+            规则链: <strong id="iptables-chain" style="color: var(--text)">--</strong>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="global-controls">
+            <button class="btn btn-danger" onclick="closeAll()">一键关闭全部</button>
+            <div class="switch-wrapper">
+                <span>180 分钟最长放行机制</span>
+                <label class="switch">
+                    <input type="checkbox" id="max-duration-toggle" onchange="toggleMaxDuration()">
+                    <span class="slider"></span>
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <div id="ports-container"></div>
+
+    <div id="toast" class="toast"></div>
+
+    <script>
+        const API_BASE = '/api';
+        
+        function showToast(msg, isError = false) {
+            const toast = document.getElementById('toast');
+            toast.textContent = msg;
+            toast.className = 'toast show ' + (isError ? 'error' : 'success');
+            setTimeout(() => toast.className = 'toast', 3000);
+        }
+
+        async function fetchAPI(url, method = 'POST') {
+            try {
+                const res = await fetch(API_BASE + url, { method });
+                const data = await res.json();
+                if (data.success) {
+                    if (method !== 'GET') showToast('操作成功');
+                    render(data.data);
+                } else {
+                    showToast(data.message || '操作失败', true);
+                }
+            } catch (e) {
+                showToast('网络错误: ' + e.message, true);
+            }
+        }
+
+        function formatTime(t) {
+            if (!t) return '--';
+            const d = new Date(t);
+            return d.toLocaleTimeString() + ' ' + d.toLocaleDateString();
+        }
+
+        function renderPortCard(port, info) {
+            const isEnabled = info.enabled;
+            const tcpConn = info.tcpConnected ? 'on' : 'off';
+            const udpConn = info.udpConnected ? 'on' : 'off';
+            const connected = info.connected ? 'on' : 'off';
+            
+            let btnHtml = isEnabled 
+                ? `<button class="btn btn-outline" onclick="fetchAPI('/close${port === '33899' ? '1' : '2'}')">关闭端口</button>`
+                : `<button class="btn btn-success" onclick="fetchAPI('/open${port === '33899' ? '1' : '2'}')">开启端口</button>`;
+
+            return `
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">端口 ${port}</h2>
+                    <div class="controls">${btnHtml}</div>
+                </div>
+                <div class="status-grid">
+                    <div class="status-item">
+                        <span class="status-label">放行状态</span>
+                        <span class="status-value ${isEnabled ? 'on' : 'off'}">${isEnabled ? '已开启' : '未开启'}</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">TCP 活跃</span>
+                        <span class="status-value ${tcpConn}">${info.tcpConnected ? '活跃' : '无连接'}</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">UDP 活跃</span>
+                        <span class="status-value ${udpConn}">${info.udpConnected ? '活跃' : '无连接'}</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-label">综合状态</span>
+                        <span class="status-value ${connected}">${info.connected ? '连通' : '断开'}</span>
+                    </div>
+                </div>
+                ${isEnabled ? `
+                <div style="font-size: 0.85rem; color: var(--text-muted); background: rgba(0,0,0,0.15); padding: 12px; border-radius: 8px; margin-top: 5px;">
+                    <div style="margin-bottom: 4px;">开启时间：<span class="time-badge">${formatTime(info.openedAt)}</span></div>
+                    <div style="margin-bottom: 4px;">最近活跃：<span class="time-badge">${formatTime(info.lastSeenAt)}</span></div>
+                    <div style="margin-bottom: 4px;">宽限期至：<span class="time-badge">${formatTime(info.graceUntil)}</span></div>
+                    ${info.idleSince ? `<div style="margin-bottom: 4px;">空闲断开自：<span class="time-badge" style="color:var(--danger)">${formatTime(info.idleSince)}</span></div>` : ''}
+                    ${info.maxExpireAt ? `<div>最长放行至：<span class="time-badge">${formatTime(info.maxExpireAt)}</span></div>` : ''}
+                </div>
+                ` : ''}
+            </div>`;
+        }
+
+        function render(data) {
+            document.getElementById('current-ip').textContent = data.ip;
+            document.getElementById('iptables-chain').textContent = data.iptablesChain;
+            
+            const maxDurationToggle = document.getElementById('max-duration-toggle');
+            maxDurationToggle.checked = data.settings.maxDurationProtection;
+
+            let html = '';
+            if (data.ports['33899']) html += renderPortCard('33899', data.ports['33899']);
+            if (data.ports['33889']) html += renderPortCard('33889', data.ports['33889']);
+            document.getElementById('ports-container').innerHTML = html;
+        }
+
+        function closeAll() { fetchAPI('/close-all'); }
+        function toggleMaxDuration() {
+            const enabled = document.getElementById('max-duration-toggle').checked;
+            fetchAPI(enabled ? '/max-duration/enabled' : '/max-duration/disabled');
+        }
+
+        function pollStatus() {
+            fetchAPI('/status', 'GET').finally(() => {
+                setTimeout(pollStatus, 5000);
+            });
+        }
+
+        // Init
+        pollStatus();
+    </script>
+</body>
+</html>

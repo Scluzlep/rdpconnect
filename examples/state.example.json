@@ -1,0 +1,27 @@
+{
+  "rules": [
+    {
+      "ip": "1.2.3.4",
+      "port": 33899,
+      "enabled": true,
+      "tcpAllowed": true,
+      "udpAllowed": true,
+      "tcpConnected": true,
+      "udpConnected": false,
+      "connected": true,
+      "openedAt": "2026-01-01T12:00:00Z",
+      "lastSeenAt": "2026-01-01T12:05:00Z",
+      "idleSince": null,
+      "graceUntil": "2026-01-01T12:10:00Z",
+      "maxExpireAt": "2026-01-01T15:00:00Z"
+    }
+  ],
+  "settings": {
+    "iptablesChain": "RDP_JIFANG",
+    "maxDurationProtection": true,
+    "maxDurationMinutes": 180,
+    "idleCloseMinutes": 3,
+    "initialGraceMinutes": 10,
+    "scanIntervalSeconds": 10
+  }
+}

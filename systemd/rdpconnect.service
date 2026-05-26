@@ -1,0 +1,21 @@
+[Unit]
+Description=Temporary IP Port Allow Web UI
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/temp-port-ui
+ExecStart=/opt/temp-port-ui/temp-port-ui
+Restart=always
+Environment=APP_HOST=127.0.0.1
+Environment=APP_PORT=8080
+Environment=STATE_FILE=/opt/temp-port-ui/state.json
+Environment=IPTABLES_CHAIN=RDP_JIFANG
+Environment=MAX_DURATION_MINUTES=180
+Environment=IDLE_CLOSE_MINUTES=3
+Environment=INITIAL_GRACE_MINUTES=10
+Environment=SCAN_INTERVAL_SECONDS=10
+Environment=TRUST_PROXY=true
+
+[Install]
+WantedBy=multi-user.target
